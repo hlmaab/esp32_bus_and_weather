@@ -71,30 +71,52 @@ lv_obj_t *lbl_tunnel_time;
 lv_obj_t *obj_tunnel_status; // 用作顏色指示燈
 
 // 獲取指定九巴路線與站點的下班車剩餘分鐘數
-int get_kmb_eta(const char* route, const char* stop_id, int index) {
-    if (WiFi.status() != WL_CONNECTED) return -1; 
+// 獲取指定九巴路線與站點的下班車剩餘分鐘數（專屬過濾：只顯示尚德出發去程，不含回程）
+bool get_kmb_all_eta(const char* route, const char* stop_id, int* mins_out) {
+    if (WiFi.status() != WL_CONNECTED) return false; 
 
+    // 初始化快顯陣列為 -999 (代表尚未有資料)
+    mins_out[0] = -999; mins_out[1] = -999; mins_out[2] = -999;
+
+    NetworkClientSecure client;
+    client.setInsecure(); 
+    
     HTTPClient http;
+    // 注意：結尾的 /1 是去程(Outbound)方向，但保險起見我們在 JSON 內層還會再做一次 dir 與 seq 的雙重驗證
     String url = "https://data.etabus.gov.hk/v1/transport/kmb/eta/" + String(stop_id) + "/" + String(route) + "/1";
     
-    http.begin(url);
+    http.begin(client, url);
+    http.setTimeout(4000); 
+    
     int httpCode = http.GET();
-    int remaining_mins = -999; 
+    bool success = false;
 
     if (httpCode == HTTP_CODE_OK) {
         String payload = http.getString();
         JsonDocument doc; 
         DeserializationError error = deserializeJson(doc, payload);
         
-        if (!error) {
-            if (doc["data"].is<JsonArray>() && index < doc["data"].size()) {
-                JsonVariant bus_data = doc["data"][index];
-                if (bus_data.is<JsonObject>()) {
-                    const char* eta_time_str = bus_data["eta"]; 
+        if (!error && doc["data"].is<JsonArray>()) {
+            JsonArray dataArr = doc["data"].as<JsonArray>();
+            success = true;
+            
+            int eta_count = 0; // 🚀 用來記錄成功抓到幾班「尚德出發」的去程車
+            
+            for (JsonObject bus_data : dataArr) {
+                const char* current_dir = bus_data["dir"];
+                int current_seq = bus_data["seq"];
+                
+                // 🌟 核心過濾 1：必須是去程 (O) 且必須是第 1 站 (尚德總站出發)
+                if (current_dir != nullptr && strcmp(current_dir, "O") == 0 && current_seq == 1) {
                     
+                    // 🌟 核心過濾 2：如果該班次沒有 eta 時間（例如最後班次已過，eta 為 null），直接跳過
+                    if (bus_data["eta"].isNull() || !bus_data.containsKey("eta")) {
+                        continue; 
+                    }
+
+                    const char* eta_time_str = bus_data["eta"]; 
                     if (eta_time_str == nullptr || strlen(eta_time_str) < 19) {
-                        http.end();
-                        return -999; 
+                        continue; 
                     }
 
                     struct tm eta_tm = {0}; 
@@ -114,11 +136,19 @@ int get_kmb_eta(const char* route, const char* stop_id, int index) {
                         if (time(&now_epoch) != -1 && now_epoch > 1000000) {
                             if (eta_epoch != -1) {
                                 double diff_secs = difftime(eta_epoch, now_epoch);
-                                remaining_mins = diff_secs / 60;
-                                if (remaining_mins < 0) remaining_mins = 0; 
+                                int remaining = diff_secs / 60;
+                                
+                                // 將計算好的分鐘數塞入 mins_out 的對應位置
+                                mins_out[eta_count] = (remaining < 0) ? 0 : remaining;
                             }
                         } else {
-                            remaining_mins = -2; 
+                            mins_out[eta_count] = -2; // 時間同步錯誤
+                        }
+                        
+                        eta_count++;
+                        // 🚀 抓滿尚德出發的前 3 班車，就可以直接跳出迴圈了
+                        if (eta_count >= 3) {
+                            break;
                         }
                     }
                 }
@@ -126,54 +156,60 @@ int get_kmb_eta(const char* route, const char* stop_id, int index) {
         }
     }
     http.end();
-    return remaining_mins; 
+    client.stop(); 
+    return success;
 }
-
 // ===== 精準解析將軍澳隧道行車時間 =====
+// ===== 流式解析將軍澳隧道行車時間（徹底解決大檔案截斷問題） =====
 int get_tunnel_time() {
     if (WiFi.status() != WL_CONNECTED) return -1;
 
+    NetworkClientSecure client;
+    client.setInsecure(); 
+    
     HTTPClient http;
-    // 建議將網址改為 http，有時候 ESP32 在 https 處理大流量 XML 會因記憶體或證書問題卡住
-    String url = "http://resource.data.one.gov.hk/td/jss/Journeytimev2.xml"; 
-    http.begin(url);
+    String url = "https://resource.data.one.gov.hk/td/jss/Journeytimev2.xml"; 
+    
+    http.begin(client, url);
+    http.setTimeout(5000); // 檔案較大，超時稍微放寬到 5 秒
+    
     int httpCode = http.GET();
     int tko_time = -999;
 
     if (httpCode == HTTP_CODE_OK) {
-        String payload = http.getString();
+        // 改用 Stream 串流讀取，避免 getString() 截斷 27KB 的大檔案
+        Stream* stream = http.getStreamPtr();
         
-        // 1. 先定位起點 N09
-        int targetIdx = payload.indexOf("<LOCATION_ID>N09</LOCATION_ID>");
-        if (targetIdx != -1) {
-            // 2. 尋找目標終點 TKOT
-            int destIdx = payload.indexOf("<DESTINATION_ID>TKOT</DESTINATION_ID>", targetIdx);
-            
-            // 3. 確保 TKOT 在該 N09 區塊附近（300字元內）
-            if (destIdx != -1 && (destIdx - targetIdx) < 500) { 
-                // 💡 【核心修正】從 destIdx 開始往後找 JOURNEY_DATA，才不會誤抓到 TKOLTT 的數據
-                int dataStartIdx = payload.indexOf("<JOURNEY_DATA>", destIdx);
-                int dataEndIdx = payload.indexOf("</JOURNEY_DATA>", dataStartIdx);
-                
-                if (dataStartIdx != -1 && dataEndIdx != -1) {
-                    // <JOURNEY_DATA> 長度為 14
-                    String timeStr = payload.substring(dataStartIdx + 14, dataEndIdx);
-                    timeStr.trim(); // 除去可能存在的換行或空格
-                    
+        // 尋找將軍澳隧道專屬的關鍵特徵字串
+        // 核心邏輯：先找到起點 N09，再確認終點 TKOT，隨後抓取 JOURNEY_DATA
+        if (stream->find("<LOCATION_ID>N09</LOCATION_ID>")) {
+            // 在 N09 後面繼續找終點
+            if (stream->find("<DESTINATION_ID>TKOT</DESTINATION_ID>")) {
+                // 找到了該區塊，接著撈時間
+                if (stream->find("<JOURNEY_DATA>")) {
+                    // 讀取接下來的數值，直到遇到 </
+                    String timeStr = stream->readStringUntil('<');
+                    timeStr.trim();
                     if (timeStr.length() > 0) {
                         tko_time = timeStr.toInt();
-                        Serial.print("成功解析將軍澳隧道時間文本: ");
-                        Serial.println(timeStr);
+                        Serial.print("【成功動態解析】將軍澳隧道時間: ");
+                        Serial.print(tko_time);
+                        Serial.println(" 分鐘");
                     }
                 }
             }
         }
+    } else {
+        Serial.print("【錯誤】隧道 API 連線失敗，代碼: ");
+        Serial.println(httpCode);
     }
-    http.end();
     
-    // 如果解析失敗或獲取到極端異常值，回傳預設防呆值 5
+    http.end();
+    client.stop(); 
+    
+    // 如果解析失敗，啟動防呆
     if (tko_time == -999 || tko_time <= 0) {
-        Serial.println("隧道時間解析失敗，啟動防呆回傳 5");
+        Serial.println("【警告】隧道時間解析失敗或被截斷，啟動防呆回傳 5");
         tko_time = 5; 
     }
     return tko_time;
@@ -241,14 +277,14 @@ void create_bus_ui()
     // 正方形框內部分為左右：左邊放天氣 Icon
     lbl_today_icon = lv_label_create(today_weather_box);
     lv_label_set_text(lbl_today_icon, "☁️");
-    lv_obj_set_style_text_font(lbl_today_icon, &my_font_chinese_26, 0); // 大圖示
+    lv_obj_set_style_text_font(lbl_today_icon, &noto_emoji_18, 0); // 大圖示
     lv_obj_set_style_text_color(lbl_today_icon, lv_color_white(), 0);
     lv_obj_align(lbl_today_icon, LV_ALIGN_LEFT_MID, 4, 0);
 
     // 正方形框內右邊的「上面」放溫度範圍 %d-%d°C
     lbl_today_temp = lv_label_create(today_weather_box);
     lv_label_set_text(lbl_today_temp, "---°C");
-    lv_obj_set_style_text_font(lbl_today_temp, &noto_emoji_18, 0);
+    lv_obj_set_style_text_font(lbl_today_temp, &my_font_chinese_16, 0);
     lv_obj_set_style_text_color(lbl_today_temp, lv_color_white(), 0);
     lv_obj_align(lbl_today_temp, LV_ALIGN_TOP_RIGHT, -4, 6);
 
@@ -432,17 +468,26 @@ void create_bus_ui()
 void update_bus_and_tunnel_data()
 {
     Serial.println("正在更新巴士 ETA 與將軍澳隧道行車時間...");
+    
     for(int i = 0; i < 3; i++) {
-        int m1 = get_kmb_eta(buses[i].route, buses[i].stop_id, 0);
-        int m2 = get_kmb_eta(buses[i].route, buses[i].stop_id, 1);
-        int m3 = get_kmb_eta(buses[i].route, buses[i].stop_id, 2);
+        int current_mins[3] = {-999, -999, -999};
+        
+        // 核心改變：一次聯網直接拿回該路線的 3 班車資料！
+        bool ok = get_kmb_all_eta(buses[i].route, buses[i].stop_id, current_mins);
 
-        buses[i].mins[0] = m1;
-        buses[i].mins[1] = m2;
-        buses[i].mins[2] = m3;
+        // 把撈到的時間賦值回結構體與本地變數
+        buses[i].mins[0] = current_mins[0];
+        buses[i].mins[1] = current_mins[1];
+        buses[i].mins[2] = current_mins[2];
+
+        int m1 = current_mins[0];
+        int m2 = current_mins[1];
+        int m3 = current_mins[2];
 
         lvgl_port_lock(-1);
-        if(m1 == -1 || m1 == -2) {
+        
+        // 顯示第 1 班車的 UI 邏輯
+        if(!ok || m1 == -1 || m1 == -2) {
             lv_obj_set_style_text_font(buses[i].lbl_mins, &my_font_chinese_26, 0); 
             lv_label_set_text(buses[i].lbl_mins, "err");
             lv_obj_set_style_text_color(buses[i].lbl_mins, lv_color_make(156, 163, 175), 0);
@@ -468,21 +513,25 @@ void update_bus_and_tunnel_data()
             }
         }
 
+        // 顯示第 2 班車的 UI 邏輯
         if(m2 >= 0 && m2 < 120) { 
             lv_label_set_text_fmt(buses[i].lbl_next2, "%d Min.", m2);
         } else {
             lv_label_set_text(buses[i].lbl_next2, "-- Min."); 
         }
 
+        // 顯示第 3 班車的 UI 邏輯
         if(m3 >= 0 && m3 < 120) {
             lv_label_set_text_fmt(buses[i].lbl_next3, "%d Min.", m3);
         } else {
             lv_label_set_text(buses[i].lbl_next3, "-- Min.");
         }
+        
         lvgl_port_unlock();
-        delay(20); 
+        
     }
 
+    // 更新隧道時間
     int tunnel_mins = get_tunnel_time();
     lvgl_port_lock(-1);
     if (tunnel_mins > 0) {
@@ -505,14 +554,19 @@ void update_bus_and_tunnel_data()
 }
 
 // 🛠️ 升級天文台解析：直接把 API 預報的第 0 天當作「今日天氣正方形框」的資料來源！
+// 🛠️ 修正天文台解析：補上 NetworkClientSecure 避免 protocol 警告與緩衝殘留
 void update_weather_data() {
     if (WiFi.status() != WL_CONNECTED) return;
 
     Serial.println("正在向天文台抓取天氣預報...");
+    
+    NetworkClientSecure client;
+    client.setInsecure(); // 天文台使用 HTTPS，必須搭配 Secure Client
+    
     HTTPClient http;
     String url = "https://data.weather.gov.hk/weatherAPI/opendata/weather.php?dataType=fnd&lang=tc";
     
-    http.begin(url);
+    http.begin(client, url); // 👈 修正：傳入 client
     http.setTimeout(4000); 
     int httpCode = http.GET();
 
@@ -530,20 +584,18 @@ void update_weather_data() {
             int today_max = today["forecastMaxtemp"]["value"];
             const char* today_psr_val = today["PSR"];
             const char* today_desc = today["forecastWeather"];
-            const char* today_date_raw = today["forecastDate"]; // 用來做日期比對
+            const char* today_date_raw = today["forecastDate"]; 
 
             // 今日圖示
             const char* today_icon = "☁️";
             if (today_desc != nullptr) {
-                    if (strstr(today_desc, "晴") != NULL) {
-                        today_icon = "\u2600"; // \u2600 (U+2600)
-                    }
-                    else if (strstr(today_desc, "雨") != NULL || strstr(today_desc, "驟雨") != NULL) {
-                        today_icon = "🌧️";
-                    }
-                    else if (strstr(today_desc, "雷") != NULL || strstr(today_desc, "雷暴") != NULL) {
-                        today_icon = "⛈️"; // ⛈ (U+26C8) 飛走了隱藏的 U+FE0F
-                    }
+                if (strstr(today_desc, "晴") != NULL) {
+                    today_icon = "\u2600"; 
+                } else if (strstr(today_desc, "雨") != NULL || strstr(today_desc, "驟雨") != NULL) {
+                    today_icon = "🌧️";
+                } else if (strstr(today_desc, "雷") != NULL || strstr(today_desc, "雷暴") != NULL) {
+                    today_icon = "⛈️"; 
+                }
             }
             lv_label_set_text(lbl_today_icon, today_icon);
 
@@ -562,20 +614,16 @@ void update_weather_data() {
                 lv_obj_set_style_text_color(lbl_today_psr, lv_color_make(34, 211, 238), 0); 
             }
 
-
-            // ------------------ 🔄 2. 解析未來 3 天預報（加入防呆機制） ------------------
-            // 檢查 index 1 的日期是否不小心跟 index 0 重疊，或是天文台深夜抽換了資料
+            // ------------------ 🔄 2. 解析未來 3 天預報 ------------------
             int start_index = 1;
             JsonObject next_day = doc["weatherForecast"][1];
             const char* next_day_date = next_day["forecastDate"];
             
-            // 如果 index 1 的日期跟今日一樣（極少見，防呆），則未來預報從 index 2 開始推
             if (today_date_raw != nullptr && next_day_date != nullptr && strcmp(today_date_raw, next_day_date) == 0) {
                 start_index = 2;
             }
 
             for(int i = 0; i < 3; i++) {
-                // 根據 start_index 動態抓取明、後、大後天
                 JsonObject day = doc["weatherForecast"][start_index + i]; 
                 
                 const char* forecastDate = day["forecastDate"]; 
@@ -595,13 +643,11 @@ void update_weather_data() {
                 const char* weather_icon = "☁️"; 
                 if (weather_desc != nullptr) {
                     if (strstr(weather_desc, "晴") != NULL) {
-                        weather_icon = "\u2600"; // \u2600 (U+2600)
-                    }
-                    else if (strstr(weather_desc, "雨") != NULL || strstr(weather_desc, "驟雨") != NULL) {
+                        weather_icon = "\u2600"; 
+                    } else if (strstr(weather_desc, "雨") != NULL || strstr(weather_desc, "驟雨") != NULL) {
                         weather_icon = "🌧️";
-                    }
-                    else if (strstr(weather_desc, "雷") != NULL || strstr(weather_desc, "雷暴") != NULL) {
-                        weather_icon = "⛈️"; // ⛈ (U+26C8) 飛走了隱藏的 U+FE0F
+                    } else if (strstr(weather_desc, "雷") != NULL || strstr(weather_desc, "雷暴") != NULL) {
+                        weather_icon = "⛈️"; 
                     }
                 }
                 lv_label_set_text(forecast_cols[i].lbl_icon, weather_icon);
@@ -637,7 +683,9 @@ void update_weather_data() {
         Serial.println(httpCode);
     }
     http.end();
+    client.stop(); // 👈 修正：釋放 Secure 連線資源
 }
+
 void update_real_time()
 {
     struct tm timeinfo;
@@ -684,7 +732,7 @@ void setup()
 #if ESP_PANEL_DRIVERS_BUS_ENABLE_RGB && CONFIG_IDF_TARGET_ESP32S3
     auto lcd_bus = lcd->getBus();
     if (lcd_bus->getBasicAttributes().type == ESP_PANEL_BUS_TYPE_RGB) {
-        static_cast<BusRGB *>(lcd_bus)->configRGB_BounceBufferSize(lcd->getFrameWidth() * 10);
+        static_cast<BusRGB *>(lcd_bus)->configRGB_BounceBufferSize(lcd->getFrameWidth() * 20);
     }
 #endif
 
