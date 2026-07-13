@@ -60,7 +60,16 @@ const char* ssid     = "YOUR_WIFI_SSID";
 const char* password = "YOUR_WIFI_PASSWORD";
 ```
 
-4. Compile & Upload:
+4. Configure your bus routes:
+```bash
+BusConfig buses[3] = {
+    {"296A", "往牛頭角站(循環線)", "403881982F9E7209", {-1, -1, -1}, nullptr, nullptr, nullptr},
+    {"296C", "往長沙灣(海盈邨)", "5527FF8CC85CF139", {-1, -1, -1}, nullptr, nullptr, nullptr},
+    {"296D", "往九龍站", "21E3E95EAEB2048C", {-1, -1, -1}, nullptr, nullptr, nullptr}
+};
+```
+
+6. Compile & Upload:
 - Connect your Waveshare ESP32-S3 board to your computer using a USB-C cable.
 - Select the correct COM Port under Tools > Port.
 - Click the Upload button (Right-pointing arrow).
