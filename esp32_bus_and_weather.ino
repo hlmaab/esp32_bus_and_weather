@@ -7,6 +7,7 @@
 #include "time.h"
 #include <esp_display_panel.hpp>
 #include <lvgl.h>
+#include "secrets.h"
 
 // 宣告放進資料夾的自訂中文控制字型
 LV_FONT_DECLARE(my_font_chinese_26);
