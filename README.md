@@ -90,3 +90,7 @@ BusConfig buses[3] = {
 - Click the Upload button (Right-pointing arrow).
 - If uploaded successfully, will see the message as below:
   <img width="1364" height="724" alt="image" src="https://github.com/user-attachments/assets/9f560893-1a71-407e-9fb1-61cfb0c7630e" />
+
+### 7. Finish
+  <img width="994" height="631" alt="image" src="https://github.com/user-attachments/assets/351a7dcc-7422-4436-b9d3-a1100629b3f9" />
+
