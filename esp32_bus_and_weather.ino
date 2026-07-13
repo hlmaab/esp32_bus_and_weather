@@ -133,7 +133,8 @@ int get_tunnel_time() {
     if (WiFi.status() != WL_CONNECTED) return -1;
 
     HTTPClient http;
-    String url = "https://resource.data.one.gov.hk/td/jss/Journeytimev2.xml"; 
+    // 建議將網址改為 http，有時候 ESP32 在 https 處理大流量 XML 會因記憶體或證書問題卡住
+    String url = "http://resource.data.one.gov.hk/td/jss/Journeytimev2.xml"; 
     http.begin(url);
     int httpCode = http.GET();
     int tko_time = -999;
@@ -141,24 +142,39 @@ int get_tunnel_time() {
     if (httpCode == HTTP_CODE_OK) {
         String payload = http.getString();
         
+        // 1. 先定位起點 N09
         int targetIdx = payload.indexOf("<LOCATION_ID>N09</LOCATION_ID>");
         if (targetIdx != -1) {
+            // 2. 尋找目標終點 TKOT
             int destIdx = payload.indexOf("<DESTINATION_ID>TKOT</DESTINATION_ID>", targetIdx);
             
-            if (destIdx != -1 && (destIdx - targetIdx) < 300) {
-                int dataStartIdx = payload.indexOf("<JOURNEY_DATA>", targetIdx);
+            // 3. 確保 TKOT 在該 N09 區塊附近（300字元內）
+            if (destIdx != -1 && (destIdx - targetIdx) < 500) { 
+                // 💡 【核心修正】從 destIdx 開始往後找 JOURNEY_DATA，才不會誤抓到 TKOLTT 的數據
+                int dataStartIdx = payload.indexOf("<JOURNEY_DATA>", destIdx);
                 int dataEndIdx = payload.indexOf("</JOURNEY_DATA>", dataStartIdx);
                 
                 if (dataStartIdx != -1 && dataEndIdx != -1) {
+                    // <JOURNEY_DATA> 長度為 14
                     String timeStr = payload.substring(dataStartIdx + 14, dataEndIdx);
-                    tko_time = timeStr.toInt();
+                    timeStr.trim(); // 除去可能存在的換行或空格
+                    
+                    if (timeStr.length() > 0) {
+                        tko_time = timeStr.toInt();
+                        Serial.print("成功解析將軍澳隧道時間文本: ");
+                        Serial.println(timeStr);
+                    }
                 }
             }
         }
     }
     http.end();
     
-    if (tko_time == -999 || tko_time <= 0) tko_time = 5; 
+    // 如果解析失敗或獲取到極端異常值，回傳預設防呆值 5
+    if (tko_time == -999 || tko_time <= 0) {
+        Serial.println("隧道時間解析失敗，啟動防呆回傳 5");
+        tko_time = 5; 
+    }
     return tko_time;
 }
 
