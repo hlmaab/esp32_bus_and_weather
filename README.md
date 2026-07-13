@@ -34,6 +34,7 @@ This project is developed and compiled using the **Arduino IDE**. Follow the ste
 ### 2. Required Libraries
 Install the following libraries via the Arduino Library Manager (**Tools > Manage Libraries...**):
 *   **LVGL** (v8.x.x is used in this project—*do not use v9.x unless updated*)
+*   **ESP32_Display_Panel** (by Espressif, required for managing the Waveshare LCD driver and interface)
 *   **ArduinoJson** (for parsing weather/bus API payloads)
 *   **WiFi** and **HTTPClient** (built into the ESP32 core)
 
@@ -49,18 +50,21 @@ Install the following libraries via the Arduino Library Manager (**Tools > Manag
    ```bash
    git clone https://github.com/hlmaab/esp32_bus_and_weather.git
 
-2. Open the Sketch:
+2. **Open the Sketch:**
 - Open esp32_bus_and_weather.ino inside the Arduino IDE.
+- 
+3. **Configuration & Credentials**
+**Wi-Fi & API Setup (`secrets.h`)**
+To protect your credentials, this repository uses a separate secrets file. Do not hardcode passwords directly into the main sketch.
 
-3. Configure Wi-Fi & APIs:
-Inside the main .ino file, update your network credentials and API endpoints:
+1. Locate `secrets.example.h` in the project root directory.
+2. Duplicate or rename the file to `secrets.h`.
+3. Open `secrets.h` and input your network credentials and API keys:
+   ```cpp
+   const char *ssid     = "YOUR_WIFI_SSID";
+   const char *password = "YOUR_WIFI_PASSWORD";
 
-```bash
-const char* ssid     = "YOUR_WIFI_SSID";
-const char* password = "YOUR_WIFI_PASSWORD";
-```
-
-4. Configure your bus routes:
+4. **Configure your bus routes:**
 ```bash
 BusConfig buses[3] = {
     {"296A", "往牛頭角站(循環線)", "403881982F9E7209", {-1, -1, -1}, nullptr, nullptr, nullptr},
@@ -69,7 +73,7 @@ BusConfig buses[3] = {
 };
 ```
 
-6. Compile & Upload:
+5. **Compile & Upload:**
 - Connect your Waveshare ESP32-S3 board to your computer using a USB-C cable.
 - Select the correct COM Port under Tools > Port.
 - Click the Upload button (Right-pointing arrow).
