@@ -47,7 +47,7 @@ Install the following libraries via the Arduino Library Manager (**Tools > Manag
 
 1. **Clone the Repository:**
    ```bash
-   git clone [https://github.com/hlmaab/esp32_bus_and_weather.git](https://github.com/hlmaab/esp32_bus_and_weather.git)
+   git clone https://github.com/hlmaab/esp32_bus_and_weather.git
 
 2. Open the Sketch:
 - Open esp32_bus_and_weather.ino inside the Arduino IDE.
