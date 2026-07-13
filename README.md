@@ -54,7 +54,11 @@ git clone https://github.com/hlmaab/esp32_bus_and_weather.git
 ### 2. Open the Sketch
 * Open `esp32_bus_and_weather.ino` inside the Arduino IDE.
 
-### 3. Configuration & Credentials
+### 3. Setup Arduino IDE
+<img width="1364" height="702" alt="image" src="https://github.com/user-attachments/assets/e20c1c1f-fc23-4ed6-9d43-03a3309c9dea" />
+<img width="1364" height="720" alt="image" src="https://github.com/user-attachments/assets/4b1d7ef4-532d-4511-9ff5-6b8a377a5f46" />
+
+### 4. Configuration & Credentials
 #### Wi-Fi & API Setup (`secrets.h`)
 To protect your credentials, this repository uses a separate secrets file. Do not hardcode passwords directly into the main sketch.
 
@@ -65,7 +69,7 @@ To protect your credentials, this repository uses a separate secrets file. Do no
    const char *ssid     = "YOUR_WIFI_SSID";
    const char *password = "YOUR_WIFI_PASSWORD";
    ```
-### 4. Configure Your Bus Routes
+### 5. Configure Your Bus Routes
 Open the main sketch file and update your bus route configurations inside the array:
 
 ```cpp
@@ -76,7 +80,13 @@ BusConfig buses[3] = {
 };
    ```
 
-### 5. Compile & Upload
+### 6. Compile & Upload
 - Connect your Waveshare ESP32-S3 board to your computer using a USB-C cable.
+   - if use UART port, Step 3 set USB CDC On Boot: Disabled
+   - if use USB port, Step 3 set USB CDC On Boot: Enabled
+   <img width="459" height="525" alt="image" src="https://github.com/user-attachments/assets/962785e6-58cf-4e78-8cf0-c35d2460ac6c" />
+
 - Select the correct COM Port under Tools > Port.
 - Click the Upload button (Right-pointing arrow).
+- If uploaded successfully, will see the message as below:
+  <img width="1364" height="724" alt="image" src="https://github.com/user-attachments/assets/9f560893-1a71-407e-9fb1-61cfb0c7630e" />
