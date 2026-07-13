@@ -22,8 +22,8 @@ using namespace esp_panel::drivers;
 using namespace esp_panel::board;
 
 // ==================== Wi-Fi 設定 ====================
-const char* ssid     = "{Wifi_SSID}";
-const char* password = "{Wifi_Password}";
+const char* ssid     = SECRET_SSID;     // 👈 替換成 secrets.h 裡的變數
+const char* password = SECRET_PASSWORD; // 👈 替換成 secrets.h 裡的變數
 
 const char* ntpServer = "stdtime.gov.hk";
 const long  gmtOffset_sec = 28800; // GMT+8

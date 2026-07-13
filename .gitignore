@@ -1,1 +1,8 @@
 .DS_Store
+Thumbs.db
+**/build/
+**/bin/
+.build/
+.vscode/
+.idea/
+secrets.h
