@@ -26,8 +26,10 @@ jobs:
       - name: Install Dependencies (Libraries)
         run: |
           arduino-cli lib install "ArduinoJson"
-          # Install the missing display panel library
-          arduino-cli lib install "ESP32_Display_Panel"
+          # Pin ESP32_Display_Panel to v0.1.4
+          arduino-cli lib install "ESP32_Display_Panel@0.1.4"
+          # Pin LVGL to v8.4.0
+          arduino-cli lib install "lvgl@8.4.0"
 
       - name: Create Placeholder Secrets File
         run: |
