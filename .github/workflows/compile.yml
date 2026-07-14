@@ -1,0 +1,39 @@
+name: Test Compile ESP32 Sketch
+
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
+
+jobs:
+  compile:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout Repository
+      uses: actions/checkout@v4
+
+    - name: Setup Arduino CLI
+      uses: arduino/setup-arduino-cli@v2
+
+    - name: Install ESP32 Platform Core
+      run: |
+        arduino-cli core update-index --additional-urls https://espressif.github.io/arduino-esp32/package_esp32_index.json
+        arduino-cli core install esp32:esp32 --additional-urls https://espressif.github.io/arduino-esp32/package_esp32_index.json
+
+    - name: Install Dependencies (Libraries)
+      run: |
+        arduino-cli lib install "ArduinoJson"
+
+    - name: Create Placeholder Secrets File
+      run: |
+        if [ ! -f secrets.h ]; then
+          echo '#define SECRET_SSID "DummySSID"' > secrets.h
+          echo '#define SECRET_PASSWORD "DummyPassword"' >> secrets.h
+        fi
+
+    - name: Compile Sketch
+      run: |
+        # Using esp32:esp32:esp32s3 as a standard target, change the FQBN if you use a different board variant
+        arduino-cli compile --fqbn esp32:esp32:esp32s3 ./esp32_bus_and_weather.ino
