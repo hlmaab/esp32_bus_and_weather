@@ -54,4 +54,8 @@ jobs:
           
       - name: Compile Sketch
         run: |
-          arduino-cli compile --fqbn esp32:esp32:esp32s3 ./esp32_bus_and_weather.ino
+          arduino-cli compile \
+            --fqbn esp32:esp32:esp32s3 \
+            --build-property "build.partitions=huge_app" \
+            --build-property "upload.maximum_size=3145728" \
+            ./esp32_bus_and_weather.ino
