@@ -38,6 +38,20 @@ jobs:
             echo '#define SECRET_PASSWORD "DummyPassword"' >> secrets.h
           fi
 
+          # Create the missing lv_conf.h in the libraries directory
+          mkdir -p /home/runner/Arduino/libraries/
+          cat << 'EOF' > /home/runner/Arduino/libraries/lv_conf.h
+          #ifndef LV_CONF_H
+          #define LV_CONF_H
+          
+          #define LV_USE_LOG      1
+          #define LV_COLOR_DEPTH  16
+          
+          /* Include the default LVGL configuration template */
+          #include "lvgl/src/extra/lv_extra.h" 
+          #endif
+          EOF
+          
       - name: Compile Sketch
         run: |
           arduino-cli compile --fqbn esp32:esp32:esp32s3 ./esp32_bus_and_weather.ino
