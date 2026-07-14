@@ -33,22 +33,35 @@ jobs:
 
       - name: Create Placeholder Secrets File
         run: |
+          # Create secrets placeholder
           if [ ! -f secrets.h ]; then
             echo '#define SECRET_SSID "DummySSID"' > secrets.h
             echo '#define SECRET_PASSWORD "DummyPassword"' >> secrets.h
           fi
 
-          # Create the missing lv_conf.h in the libraries directory
+          # Create a robust, working lv_conf.h that includes standard defaults
           mkdir -p /home/runner/Arduino/libraries/
           cat << 'EOF' > /home/runner/Arduino/libraries/lv_conf.h
           #ifndef LV_CONF_H
           #define LV_CONF_H
+
+          /* Enable the configuration file */
+          #define LV_CONF_SUPPRESS_DEFINE_LIMITS
           
-          #define LV_USE_LOG      1
-          #define LV_COLOR_DEPTH  16
-          
-          /* Include the default LVGL configuration template */
-          #include "lvgl/src/extra/lv_extra.h" 
+          /* Include the complete default configuration template from v8 */
+          #include "lvgl/src/extra/lv_extra.h"
+          #include "lvgl/lv_conf_template.h"
+
+          /* Force correct color depth and basic requirements */
+          #undef LV_COLOR_DEPTH
+          #define LV_COLOR_DEPTH 16
+
+          #undef LV_GRADIENT_MAX_STOPS
+          #define LV_GRADIENT_MAX_STOPS 2
+
+          #undef LV_USE_LOG
+          #define LV_USE_LOG 1
+
           #endif
           EOF
           
