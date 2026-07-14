@@ -35,6 +35,7 @@ struct BusConfig {
     const char* route;
     const char* dest;
     const char* stop_id;
+    int seq;
     int mins[3];          // 儲存第 1, 2, 3 班車的分鐘數
     lv_obj_t* lbl_mins;   // 第 1 班車
     lv_obj_t* lbl_next2;  // 第 2 班車
@@ -42,9 +43,9 @@ struct BusConfig {
 };
 
 BusConfig buses[3] = {
-    {"296A", "往牛頭角站(循環線)", "403881982F9E7209", {-1, -1, -1}, nullptr, nullptr, nullptr},
-    {"296C", "往長沙灣(海盈邨)", "5527FF8CC85CF139", {-1, -1, -1}, nullptr, nullptr, nullptr},
-    {"296D", "往九龍站", "21E3E95EAEB2048C", {-1, -1, -1}, nullptr, nullptr, nullptr}
+  { "296A", "往牛頭角站(循環線)", "403881982F9E7209", 1, {-1, -1, -1}, nullptr, nullptr, nullptr },
+  { "296C", "往長沙灣(海盈邨)", "5527FF8CC85CF139", 1, {-1, -1, -1}, nullptr, nullptr, nullptr },
+  { "296D", "往九龍站",         "21E3E95EAEB2048C", 1, {-1, -1, -1}, nullptr, nullptr, nullptr }
 };
 
 struct ForecastUI {
@@ -72,7 +73,7 @@ lv_obj_t *obj_tunnel_status; // 用作顏色指示燈
 
 // 獲取指定九巴路線與站點的下班車剩餘分鐘數
 // 獲取指定九巴路線與站點的下班車剩餘分鐘數（專屬過濾：只顯示尚德出發去程，不含回程）
-bool get_kmb_all_eta(const char* route, const char* stop_id, int* mins_out) {
+bool get_kmb_all_eta(const char* route, const char* stop_id, int target_seq, int* mins_out) {
     if (WiFi.status() != WL_CONNECTED) return false; 
 
     // 初始化快顯陣列為 -999 (代表尚未有資料)
@@ -106,9 +107,8 @@ bool get_kmb_all_eta(const char* route, const char* stop_id, int* mins_out) {
                 const char* current_dir = bus_data["dir"];
                 int current_seq = bus_data["seq"];
                 
-                // 🌟 核心過濾 1：必須是去程 (O) 且必須是第 1 站 (尚德總站出發)
-                if (current_dir != nullptr && strcmp(current_dir, "O") == 0 && current_seq == 1) {
-                    
+                // 🌟 核心過濾 1：必須是去程 (O) 且必須是第 target_seq 站 (e.g.尚德總站出發)
+                if (current_dir != nullptr && strcmp (current_dir, "O" ) == 0 && current_seq == target_seq) {                    
                     // 🌟 核心過濾 2：如果該班次沒有 eta 時間（例如最後班次已過，eta 為 null），直接跳過
                     if (bus_data["eta"].isNull() || !bus_data.containsKey("eta")) {
                         continue; 
@@ -473,7 +473,7 @@ void update_bus_and_tunnel_data()
         int current_mins[3] = {-999, -999, -999};
         
         // 核心改變：一次聯網直接拿回該路線的 3 班車資料！
-        bool ok = get_kmb_all_eta(buses[i].route, buses[i].stop_id, current_mins);
+        bool ok = get_kmb_all_eta (buses[i].route, buses[i].stop_id, buses[i].seq, current_mins);
 
         // 把撈到的時間賦值回結構體與本地變數
         buses[i].mins[0] = current_mins[0];
