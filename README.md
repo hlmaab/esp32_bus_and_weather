@@ -79,9 +79,9 @@ Open the main sketch file and update your bus route configurations inside the ar
 
 ```cpp
 BusConfig buses[3] = {
-    {"296A", "往牛頭角站(循環線)", "403881982F9E7209", {-1, -1, -1}, nullptr, nullptr, nullptr},
-    {"296C", "往長沙灣(海盈邨)", "5527FF8CC85CF139", {-1, -1, -1}, nullptr, nullptr, nullptr},
-    {"296D", "往九龍站", "21E3E95EAEB2048C", {-1, -1, -1}, nullptr, nullptr, nullptr}
+  { "296A", "往牛頭角站(循環線)", "403881982F9E7209", 1, {-1, -1, -1}, nullptr, nullptr, nullptr },
+  { "296C", "往長沙灣(海盈邨)", "5527FF8CC85CF139", 1, {-1, -1, -1}, nullptr, nullptr, nullptr },
+  { "296D", "往九龍站",         "21E3E95EAEB2048C", 1, {-1, -1, -1}, nullptr, nullptr, nullptr }
 };
    ```
 
