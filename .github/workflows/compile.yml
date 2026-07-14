@@ -26,8 +26,8 @@ jobs:
       - name: Install Dependencies (Libraries)
         run: |
           arduino-cli lib install "ArduinoJson"
-          # Pin ESP32_Display_Panel to v0.1.4
-          arduino-cli lib install "ESP32_Display_Panel@0.1.4"
+          # Use the stable version that actually contains esp_display_panel.hpp
+          arduino-cli lib install "ESP32_Display_Panel"
           # Pin LVGL to v8.4.0
           arduino-cli lib install "lvgl@8.4.0"
 
