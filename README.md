@@ -2,6 +2,12 @@
 
 An interactive, ESP32-S3-powered smart display that fetches and displays real-time bus arrival timings and weather information. Built using the **LVGL** graphics library for a smooth, modern User Interface (UI).
 
+## Latest Release 🚀
+
+### [v1.0.0 - Initial Stable Release](https://github.com/hlmaab/esp32_bus_and_weather/releases/tag/v1.0.0)
+We have officially released **v1.0.0**! This version is fully optimized for the Waveshare ESP32-S3-Touch-LCD-4.3 board.
+
+---
 ## Features
 * **Real-time Bus Tracking:** Displays upcoming bus arrival or tunnel transit times.
 * **Live Weather Updates:** Pulls current weather data and forecasts.
@@ -18,7 +24,6 @@ This project is specifically configured for the following hardware:
 * **Processor:** ESP32-S3 dual-core Xtensa LX7.
 
 ---
-
 ## Software & Environment Setup
 
 This project is developed and compiled using the **Arduino IDE**. Follow the steps below to set up your environment:
