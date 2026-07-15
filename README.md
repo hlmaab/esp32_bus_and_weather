@@ -70,16 +70,19 @@ To protect your credentials, this repository uses a separate secrets file. Do no
    const char *password = "YOUR_WIFI_PASSWORD";
    ```
 ### 5. Configure Your Bus Routes
-Open the main sketch file and update your bus route configurations inside the array:
-
+Open the esp32_bus_and_weather.ino file and update your bus route configurations inside the array:
 ```cpp
-BusConfig buses[3] = {
-  { "296A", "往牛頭角站(循環線)", "403881982F9E7209", "1", 1, {-1, -1, -1}, nullptr, nullptr, nullptr },
-  { "296C", "往長沙灣(海盈邨)", "5527FF8CC85CF139", "1", 1, {-1, -1, -1}, nullptr, nullptr, nullptr },
-  { "296D", "往九龍站",         "21E3E95EAEB2048C", "1", 1, {-1, -1, -1}, nullptr, nullptr, nullptr }
-};
+// ==================== 🚗 巴士設定 ====================
+  { "296A", "往牛頭角站(循環線)", "403881982F9E7209", "1", "O", 1, {-1, -1, -1}, nullptr, nullptr, nullptr },
+  { "296C", "往長沙灣(海盈邨)", "5527FF8CC85CF139", "1", "O", 1, {-1, -1, -1}, nullptr, nullptr, nullptr },
+  { "296D", "往九龍站",         "21E3E95EAEB2048C", "1", "O", 1, {-1, -1, -1}, nullptr, nullptr, nullptr }
    ```
 
+```cpp
+// ==================== 🚗 隧道行車時間設定 ====================
+const char* TUNNEL_START_ID = "N09";   // 👈 起點 ID (N09 = 將軍澳收費廣場)
+const char* TUNNEL_DEST_ID  = "TKOT";  // 👈 終點 ID (TKOT = 啟田道迴旋處/觀塘)
+   ```
 ### 6. Compile & Upload
 - Connect your Waveshare ESP32-S3 board to your computer using a USB-C cable.
    - if use UART port, Step 3 set USB CDC On Boot: Disabled
