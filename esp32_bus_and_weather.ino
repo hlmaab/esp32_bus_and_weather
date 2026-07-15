@@ -74,7 +74,7 @@ lv_obj_t *lbl_tunnel_title;
 lv_obj_t *lbl_tunnel_time;
 lv_obj_t *obj_tunnel_status; // 用作顏色指示燈
 
-// 獲取指定九巴路線與站點的下班車剩餘分鐘數
+
 // 獲取指定九巴路線與站點的下班車剩餘分鐘數（專屬過濾：只顯示尚德出發去程，不含回程）
 bool get_kmb_all_eta(const char* route, const char* stop_id, int target_seq, int* mins_out) {
     if (WiFi.status() != WL_CONNECTED) return false; 
@@ -96,9 +96,8 @@ bool get_kmb_all_eta(const char* route, const char* stop_id, int target_seq, int
     bool success = false;
 
     if (httpCode == HTTP_CODE_OK) {
-        String payload = http.getString();
         JsonDocument doc; 
-        DeserializationError error = deserializeJson(doc, payload);
+        DeserializationError error = deserializeJson(doc, http.getStream());
         
         if (!error && doc["data"].is<JsonArray>()) {
             JsonArray dataArr = doc["data"].as<JsonArray>();
@@ -181,25 +180,40 @@ int get_tunnel_time(const char* start_id, const char* dest_id) {
     if (httpCode == HTTP_CODE_OK) {
         // 改用 Stream 串流讀取，避免 getString() 截斷 27KB 的大檔案
         Stream* stream = http.getStreamPtr();
+        stream->setTimeout(1000); // 縮短 stream 讀取超時防卡死
 
-        String start_tag = "<LOCATION_ID>" + String(start_id) + "</LOCATION_ID>";
-        String dest_tag = "<DESTINATION_ID>" + String(dest_id) + "</DESTINATION_ID>";
+        String target_start = String(start_id);
+        String target_dest  = String(dest_id);
 
-        // 尋找將軍澳隧道專屬的關鍵特徵字串
-        // 核心邏輯：先找到起點 N09，再確認終點 TKOT，隨後抓取 JOURNEY_DATA
-        if (stream->find((char*)start_tag.c_str())) {
-            // 在 N09 後面繼續找終點
-            if (stream->find((char*)dest_tag.c_str())) {
-                // 找到了該區塊，接著撈時間
-                if (stream->find("<JOURNEY_DATA>")) {
-                    // 讀取接下來的數值，直到遇到 </
-                    String timeStr = stream->readStringUntil('<');
-                    timeStr.trim();
-                    if (timeStr.length() > 0) {
-                        tko_time = timeStr.toInt();
-                        Serial.print("【成功動態解析】將軍澳隧道時間: ");
-                        Serial.print(tko_time);
-                        Serial.println(" 分鐘");
+        bool found = false;
+
+        while (stream->find("<jtis_journey_time>")) {
+            // 讀取整個區塊的內容，直到遇到這個區塊的結束標籤 </jtis_journey_time>
+            String block = stream->readStringUntil('>'); // 越過第一個標籤
+            block = stream->readStringUntil('/'); // 讀取直到下一個結束標籤的斜槓
+            
+            // 此時 block 裡面包含了這個區塊內的所有 XML 內容
+            // 我們直接在 block 字串內進行精確匹配：
+            String check_start = "<LOCATION_ID>" + target_start + "</LOCATION_ID>";
+            String check_dest  = "<DESTINATION_ID>" + target_dest + "</DESTINATION_ID>";
+
+            // 只有起點和終點【同時】存在於這個 block 內，才是我們要的資料！
+            if (block.indexOf(check_start) != -1 && block.indexOf(check_dest) != -1) {
+                // 在這個 block 內提取 <JOURNEY_DATA> 的數值
+                int data_start_idx = block.indexOf("<JOURNEY_DATA>");
+                if (data_start_idx != -1) {
+                    data_start_idx += 14; // 移到 <JOURNEY_DATA> 標籤之後
+                    int data_end_idx = block.indexOf("</JOURNEY_DATA>", data_start_idx);
+                    
+                    if (data_end_idx != -1) {
+                        String timeStr = block.substring(data_start_idx, data_end_idx);
+                        timeStr.trim();
+                        if (timeStr.length() > 0) {
+                            tko_time = timeStr.toInt();
+                            Serial.printf("🎯【100%% 準確定位】找到 %s 往 %s 的時間: %d 分鐘\n", start_id, dest_id, tko_time);
+                            found = true;
+                            break; // 搵到就即刻收工，跳出 while 迴圈！
+                        }
                     }
                 }
             }
@@ -576,9 +590,8 @@ void update_weather_data() {
     int httpCode = http.GET();
 
     if (httpCode == HTTP_CODE_OK) {
-        String payload = http.getString();
         JsonDocument doc; 
-        DeserializationError error = deserializeJson(doc, payload);
+        DeserializationError error = deserializeJson(doc, http.getStream());
         
         if (!error) {
             lvgl_port_lock(-1);
