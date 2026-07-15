@@ -29,7 +29,10 @@ const char* password = SECRET_PASSWORD; // 👈 替換成 secrets.h 裡的變數
 const char* ntpServer = "stdtime.gov.hk";
 const long  gmtOffset_sec = 28800; // GMT+8
 const int   daylightOffset_sec = 0;
-// ===================================================
+// ==================== 🚗 隧道行車時間設定 ====================
+const char* TUNNEL_START_ID = "N09";   // 👈 起點 ID (N09 = 將軍澳收費廣場)
+const char* TUNNEL_DEST_ID  = "TKOT";  // 👈 終點 ID (TKOT = 啟田道迴旋處/觀塘)
+// ==========================================================
 
 struct BusConfig {
     const char* route;
@@ -41,13 +44,13 @@ struct BusConfig {
     lv_obj_t* lbl_next2;  // 第 2 班車
     lv_obj_t* lbl_next3;  // 第 3 班車
 };
-
+// ==================== 🚗 巴士設定 ====================
 BusConfig buses[3] = {
   { "296A", "往牛頭角站(循環線)", "403881982F9E7209", 1, {-1, -1, -1}, nullptr, nullptr, nullptr },
   { "296C", "往長沙灣(海盈邨)", "5527FF8CC85CF139", 1, {-1, -1, -1}, nullptr, nullptr, nullptr },
   { "296D", "往九龍站",         "21E3E95EAEB2048C", 1, {-1, -1, -1}, nullptr, nullptr, nullptr }
 };
-
+// ==========================================================
 struct ForecastUI {
     lv_obj_t *lbl_date;    // 日期 (如 07/12)
     lv_obj_t *lbl_icon;    // 天氣大圖示 (如 \u2600/🌧️)
@@ -160,8 +163,7 @@ bool get_kmb_all_eta(const char* route, const char* stop_id, int target_seq, int
     return success;
 }
 // ===== 精準解析將軍澳隧道行車時間 =====
-// ===== 流式解析將軍澳隧道行車時間（徹底解決大檔案截斷問題） =====
-int get_tunnel_time() {
+int get_tunnel_time(const char* start_id, const char* dest_id) {
     if (WiFi.status() != WL_CONNECTED) return -1;
 
     NetworkClientSecure client;
@@ -179,12 +181,15 @@ int get_tunnel_time() {
     if (httpCode == HTTP_CODE_OK) {
         // 改用 Stream 串流讀取，避免 getString() 截斷 27KB 的大檔案
         Stream* stream = http.getStreamPtr();
-        
+
+        String start_tag = "<LOCATION_ID>" + String(start_id) + "</LOCATION_ID>";
+        String dest_tag = "<DESTINATION_ID>" + String(dest_id) + "</DESTINATION_ID>";
+
         // 尋找將軍澳隧道專屬的關鍵特徵字串
         // 核心邏輯：先找到起點 N09，再確認終點 TKOT，隨後抓取 JOURNEY_DATA
-        if (stream->find("<LOCATION_ID>N09</LOCATION_ID>")) {
+        if (stream->find((char*)start_tag.c_str())) {
             // 在 N09 後面繼續找終點
-            if (stream->find("<DESTINATION_ID>TKOT</DESTINATION_ID>")) {
+            if (stream->find((char*)dest_tag.c_str())) {
                 // 找到了該區塊，接著撈時間
                 if (stream->find("<JOURNEY_DATA>")) {
                     // 讀取接下來的數值，直到遇到 </
@@ -209,8 +214,8 @@ int get_tunnel_time() {
     
     // 如果解析失敗，啟動防呆
     if (tko_time == -999 || tko_time <= 0) {
-        Serial.println("【警告】隧道時間解析失敗或被截斷，啟動防呆回傳 5");
-        tko_time = 5; 
+        Serial.println("【警告】隧道時間解析失敗或被截斷，啟動防呆回傳 0");
+        tko_time = 0; 
     }
     return tko_time;
 }
@@ -532,7 +537,7 @@ void update_bus_and_tunnel_data()
     }
 
     // 更新隧道時間
-    int tunnel_mins = get_tunnel_time();
+    int tunnel_mins = get_tunnel_time(TUNNEL_START_ID, TUNNEL_DEST_ID);
     lvgl_port_lock(-1);
     if (tunnel_mins > 0) {
         char tunnel_buf[32];
