@@ -76,6 +76,11 @@ lv_obj_t *lbl_tunnel_title;
 lv_obj_t *lbl_tunnel_time;
 lv_obj_t *obj_tunnel_status; // 用作顏色指示燈
 
+// ===== 🕒 全域計時器設定 =====
+unsigned long last_clock_update = 0;
+unsigned long last_bus_update = 0;
+unsigned long last_weather_update = 0;
+
 
 // 獲取指定九巴路線與站點的下班車剩餘分鐘數（專屬過濾：只顯示尚德出發去程，不含回程）
 bool get_kmb_all_eta(const char* route, const char* stop_id, const char* dir, const char* bound, int target_seq, int* mins_out) {
@@ -174,63 +179,75 @@ int get_tunnel_time(const char* start_id, const char* dest_id) {
     String url = "https://resource.data.one.gov.hk/td/jss/Journeytimev2.xml"; 
     
     http.begin(client, url);
-    http.setTimeout(5000); // 檔案較大，超時稍微放寬到 5 秒
+    http.setTimeout(5000); 
     
     int httpCode = http.GET();
     int tko_time = -999;
 
     if (httpCode == HTTP_CODE_OK) {
-        // 改用 Stream 串流讀取，避免 getString() 截斷 27KB 的大檔案
-        Stream* stream = http.getStreamPtr();
-        stream->setTimeout(1000); // 縮短 stream 讀取超時防卡死
+        // 直接取得網路 socket 串流
+        WiFiClient* stream = http.getStreamPtr();
+        stream->setTimeout(1500);
 
-        String target_start = String(start_id);
-        String target_dest  = String(dest_id);
+        // 建構用於比對的特徵字串
+        String target_start = "<LOCATION_ID>" + String(start_id) + "</LOCATION_ID>";
+        String target_dest  = "<DESTINATION_ID>" + String(dest_id) + "</DESTINATION_ID>";
+        
+        bool in_target_block = false;
+        int temp_time = -999;
 
-        bool found = false;
+        // 逐行讀取串流，完全避免大 String 拼接
+        while (stream->available() || client.available()) {
+            String line = stream->readStringUntil('\n');
+            line.trim();
 
-        while (stream->find("<jtis_journey_time>")) {
-            // 讀取整個區塊的內容，直到遇到這個區塊的結束標籤 </jtis_journey_time>
-            String block = stream->readStringUntil('>'); // 越過第一個標籤
-            block = stream->readStringUntil('/'); // 讀取直到下一個結束標籤的斜槓
-            
-            // 此時 block 裡面包含了這個區塊內的所有 XML 內容
-            // 我們直接在 block 字串內進行精確匹配：
-            String check_start = "<LOCATION_ID>" + target_start + "</LOCATION_ID>";
-            String check_dest  = "<DESTINATION_ID>" + target_dest + "</DESTINATION_ID>";
+            // 1. 當偵測到一個行車時間資料段起點
+            if (line.indexOf("<jtis_journey_time>") != -1) {
+                in_target_block = true;
+                temp_time = -999; // 重置臨時時間值
+            }
 
-            // 只有起點和終點【同時】存在於這個 block 內，才是我們要的資料！
-            if (block.indexOf(check_start) != -1 && block.indexOf(check_dest) != -1) {
-                // 在這個 block 內提取 <JOURNEY_DATA> 的數值
-                int data_start_idx = block.indexOf("<JOURNEY_DATA>");
-                if (data_start_idx != -1) {
-                    data_start_idx += 14; // 移到 <JOURNEY_DATA> 標籤之後
-                    int data_end_idx = block.indexOf("</JOURNEY_DATA>", data_start_idx);
-                    
-                    if (data_end_idx != -1) {
-                        String timeStr = block.substring(data_start_idx, data_end_idx);
-                        timeStr.trim();
-                        if (timeStr.length() > 0) {
-                            tko_time = timeStr.toInt();
-                            Serial.printf("🎯【100%% 準確定位】找到 %s 往 %s 的時間: %d 分鐘\n", start_id, dest_id, tko_time);
-                            found = true;
-                            break; // 搵到就即刻收工，跳出 while 迴圈！
-                        }
+            if (in_target_block) {
+                // 2. 如果在這一段裡找到了目標時間
+                if (line.indexOf("<JOURNEY_DATA>") != -1) {
+                    int s_idx = line.indexOf("<JOURNEY_DATA>") + 14;
+                    int e_idx = line.indexOf("</JOURNEY_DATA>");
+                    if (e_idx != -1) {
+                        temp_time = line.substring(s_idx, e_idx).toInt();
                     }
                 }
+
+                // 3. 檢查這一區段是否屬於我們的起終點
+                // 若這段是起點，但發現起點不對，則可以直接設定非目標
+                if (line.indexOf("<LOCATION_ID>") != -1 && line.indexOf(target_start) == -1) {
+                    in_target_block = false; // 不是我們要的區間，取消標記
+                }
+                if (line.indexOf("<DESTINATION_ID>") != -1 && line.indexOf(target_dest) == -1) {
+                    in_target_block = false; // 不是我們要的目的地，取消標記
+                }
             }
+
+            // 4. 當偵測到段落結束
+            if (line.indexOf("</jtis_journey_time>") != -1) {
+                if (in_target_block && temp_time != -999) {
+                    tko_time = temp_time;
+                    Serial.printf("🎯【定位成功】%s 往 %s: %d 分鐘\n", start_id, dest_id, tko_time);
+                    break; // 已經找到我們要的資料，提早結束，不浪費頻寬
+                }
+                in_target_block = false; // 重置標記，繼續往下找
+            }
+            
+            yield(); // 定期釋放 CPU 權限給底層 Wi-Fi 任務與看門狗
         }
     } else {
-        Serial.print("【錯誤】隧道 API 連線失敗，代碼: ");
-        Serial.println(httpCode);
+        Serial.printf("【錯誤!】隧道 API 連線失敗，代碼: %d\n", httpCode);
     }
     
     http.end();
     client.stop(); 
     
-    // 如果解析失敗，啟動防呆
     if (tko_time == -999 || tko_time <= 0) {
-        Serial.println("【警告】隧道時間解析失敗或被截斷，啟動防呆回傳 0");
+        Serial.println("【警告】隧道時間解析失敗，回傳防呆值 0");
         tko_time = 0; 
     }
     return tko_time;
@@ -582,26 +599,46 @@ void update_weather_data() {
     Serial.println("正在向天文台抓取天氣預報...");
     
     NetworkClientSecure client;
-    client.setInsecure(); // 天文台使用 HTTPS，必須搭配 Secure Client
+    client.setInsecure(); 
     
     HTTPClient http;
     String url = "https://data.weather.gov.hk/weatherAPI/opendata/weather.php?dataType=fnd&lang=tc";
     
-    http.begin(client, url); // 👈 修正：傳入 client
-    http.setTimeout(4000); 
+    http.begin(client, url); 
+    http.addHeader("Accept-Encoding", "identity"); 
+    http.setTimeout(8000); // 稍微加長超時時間，確保 Chunked 傳輸完整收包
+    
     int httpCode = http.GET();
 
     if (httpCode == HTTP_CODE_OK) {
-        JsonDocument doc; 
-        DeserializationError error = deserializeJson(doc, http.getStream());
+        // 利用 ESP32-S3 強大的 PSRAM 動態分配 String，避免佔用 Internal SRAM
+        // 在 ESP32 內部，當 String 大於一定限制或經過配置，會自動使用或手動分配至 PSRAM
+        String jsonPayload = http.getString(); 
+
+        if (jsonPayload.length() == 0) {
+            Serial.println("【錯誤】天氣資料下載為空值！");
+            http.end();
+            return;
+        }
+
+        // 宣告 Json 緩衝區
+        #if ARDUINOJSON_VERSION_MAJOR >= 7
+            JsonDocument doc;
+        #else
+            // 針對 V6 提供足夠的 Buffer
+            DynamicJsonDocument doc(12288); 
+        #endif
+
+        // 從已經完整接收的 String 中解析，不直接讀取不安定、易超時的 Network Stream
+        DeserializationError error = deserializeJson(doc, jsonPayload);
         
         if (!error) {
             lvgl_port_lock(-1);
 
             // ------------------ ✨ 1. 解析今日天氣（固定用 index 0） ------------------
             JsonObject today = doc["weatherForecast"][0];
-            int today_min = today["forecastMintemp"]["value"];
-            int today_max = today["forecastMaxtemp"]["value"];
+            int today_min = today["forecastMintemp"]["value"] | 0;
+            int today_max = today["forecastMaxtemp"]["value"] | 0;
             const char* today_psr_val = today["PSR"];
             const char* today_desc = today["forecastWeather"];
             const char* today_date_raw = today["forecastDate"]; 
@@ -647,8 +684,8 @@ void update_weather_data() {
                 JsonObject day = doc["weatherForecast"][start_index + i]; 
                 
                 const char* forecastDate = day["forecastDate"]; 
-                int temp_min = day["forecastMintemp"]["value"];
-                int temp_max = day["forecastMaxtemp"]["value"];
+                int temp_min = day["forecastMintemp"]["value"] | 0;
+                int temp_max = day["forecastMaxtemp"]["value"] | 0;
                 const char* psr = day["PSR"]; 
                 const char* weather_desc = day["forecastWeather"];
 
@@ -694,18 +731,19 @@ void update_weather_data() {
             }
             
             lvgl_port_unlock();
+            Serial.println("🎉 天氣預報數據更新並解析成功！");
         } else {
-            Serial.print("JSON 解析錯誤: ");
+            Serial.print("JSON 解析失敗，錯誤原因: ");
             Serial.println(error.c_str());
+            // 輸出部分收到的資料協助除錯
+            Serial.print("收到的資料前 150 字元: ");
+            Serial.println(jsonPayload.substring(0, 150));
         }
     } else {
-        Serial.print("天文台 API 連線失敗，代碼: ");
-        Serial.println(httpCode);
+        Serial.printf("天文台 API 連線失敗，代碼: %d\n", httpCode);
     }
     http.end();
-    client.stop(); // 👈 修正：釋放 Secure 連線資源
 }
-
 void update_real_time()
 {
     struct tm timeinfo;
@@ -732,17 +770,10 @@ void setup()
 {
     Serial.begin(115200);
     delay(1000);
-    Serial.println("=== 智能九巴與隧道看板啟動 ===");
+    Serial.println("\n=== [1/7] 智能九巴與隧道看板啟動 ===");
 
-    WiFi.begin(ssid, password);
-    while (WiFi.status() != WL_CONNECTED) {
-        delay(500);
-        Serial.print(".");
-    }
-    Serial.println("\nWi-Fi 已成功連線！");
-
-    configTime(gmtOffset_sec, daylightOffset_sec, ntpServer);
-
+    // 1. 初始化螢幕與 LVGL
+    Serial.println("[2/7] 正在初始化顯示螢幕與開發板...");
     Board *board = new Board();
     board->init();
     auto lcd = board->getLCD();
@@ -759,32 +790,78 @@ void setup()
     assert(board->begin());
     lvgl_port_init(board->getLCD(), board->getTouch());
 
+    // 2. 建立 UI 骨架
+    Serial.println("[3/7] 正在構建 LVGL 使用者介面...");
     lvgl_port_lock(-1);
     create_bus_ui();
     lvgl_port_unlock();
 
+    // 3. 連接 Wi-Fi
+    Serial.print("[4/7] 正在連線至 Wi-Fi ");
+    WiFi.begin(ssid, password);
+    int wifi_timeout = 0;
+    while (WiFi.status() != WL_CONNECTED && wifi_timeout < 30) {
+        delay(500);
+        Serial.print(".");
+        wifi_timeout++;
+    }
+    
+    if (WiFi.status() == WL_CONNECTED) {
+        Serial.println("\n[OK] Wi-Fi 已成功連線！");
+    } else {
+        Serial.println("\n[WARNING] Wi-Fi 連線逾時，將嘗試繼續...");
+    }
+
+    // 4. 同步網絡時間 (NTP)
+    Serial.println("[5/7] 正在向天文台伺服器同步網路時間...");
+    configTime(gmtOffset_sec, daylightOffset_sec, ntpServer);
+    
+    // 稍微等待時間同步完成（最多等 3 秒）
+    struct tm timeinfo;
+    int ntp_timeout = 0;
+    while (!getLocalTime(&timeinfo) && ntp_timeout < 6) {
+        delay(500);
+        ntp_timeout++;
+    }
     update_real_time();
-    update_bus_and_tunnel_data(); 
+
+    // 5. 分步獲取 API 數據（關鍵：錯開時間、主動讓出 CPU 避免卡死）
+    Serial.println("[6/7] 正在獲取第一階段數據：天氣預報...");
     update_weather_data(); 
+    delay(1500); // 👈 錯開 1.5 秒，讓 ESP32 有時間釋放天氣 API 佔用的 Heap RAM
+    yield();
+
+    Serial.println("[7/7] 正在獲取第二階段數據：巴士與隧道時間...");
+    update_bus_and_tunnel_data();
+    delay(1000);
+    yield();
+
+    // 6. 初始化計時器起點（防止一進入 loop 又立刻重複更新）
+    unsigned long current_time = millis();
+    last_clock_update   = current_time;
+    last_bus_update     = current_time;
+    last_weather_update = current_time; 
+
+    Serial.println("=== 🎉 系統初始化完成，開始進入主循環 ===");
 }
 
 void loop()
 {
     unsigned long current_millis = millis();
-    static unsigned long last_clock_update = 0;
-    static unsigned long last_bus_update = 0;
-    static unsigned long last_weather_update = 1; 
 
+    // 1. 每秒更新時鐘
     if (current_millis - last_clock_update >= 1000) {
         last_clock_update = current_millis;
         update_real_time();
     }
     
-    if (current_millis - last_bus_update >= 30000) {
+    // 2. 每 15 秒更新巴士與隧道數據
+    if (current_millis - last_bus_update >= 15000) {
         last_bus_update = current_millis;
         update_bus_and_tunnel_data();
     }
     
+    // 3. 每 15 分鐘更新天氣數據
     if (current_millis - last_weather_update >= 900000) {
         last_weather_update = current_millis;
         update_weather_data();
