@@ -196,6 +196,9 @@ int get_tunnel_time(const char* start_id, const char* dest_id) {
         bool in_target_block = false;
         int temp_time = -999;
 
+        // 用於在下載大 XML 時，定時刷新 UI 的計時器
+        unsigned long last_stream_flush = 0;
+
         // 逐行讀取串流，完全避免大 String 拼接
         while (stream->available() || client.available()) {
             String line = stream->readStringUntil('\n');
@@ -236,7 +239,15 @@ int get_tunnel_time(const char* start_id, const char* dest_id) {
                 }
                 in_target_block = false; // 重置標記，繼續往下找
             }
-            
+
+            // ✨在大循環下載時，每 16ms 允許 LVGL 刷新一次畫面，防止畫面震動與撕裂
+            if (millis() - last_stream_flush > 16) {
+                last_stream_flush = millis();
+                lvgl_port_lock(-1);
+                lv_timer_handler();
+                lvgl_port_unlock();
+            }
+
             yield(); // 定期釋放 CPU 權限給底層 Wi-Fi 任務與看門狗
         }
     } else {
@@ -783,7 +794,7 @@ void setup()
 #if ESP_PANEL_DRIVERS_BUS_ENABLE_RGB && CONFIG_IDF_TARGET_ESP32S3
     auto lcd_bus = lcd->getBus();
     if (lcd_bus->getBasicAttributes().type == ESP_PANEL_BUS_TYPE_RGB) {
-        static_cast<BusRGB *>(lcd_bus)->configRGB_BounceBufferSize(lcd->getFrameWidth() * 20);
+        static_cast<BusRGB *>(lcd_bus)->configRGB_BounceBufferSize(lcd->getFrameWidth() * 40);
     }
 #endif
 
@@ -847,6 +858,11 @@ void setup()
 
 void loop()
 {
+    // 核心：每此循環都必須執行 LVGL 的計時器處理，畫面才會絲滑
+    lvgl_port_lock(-1);
+    lv_timer_handler(); 
+    lvgl_port_unlock();
+
     unsigned long current_millis = millis();
 
     // 1. 每秒更新時鐘
@@ -866,6 +882,7 @@ void loop()
         last_weather_update = current_millis;
         update_weather_data();
     }
-
+    
+    // 留給作業系統 5 毫秒處理底層 Wi-Fi 任務
     delay(5);
 }
